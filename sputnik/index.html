@@ -585,7 +585,7 @@ void main(){ vUv = uv; vPos = position; gl_Position = projectionMatrix * modelVi
 }`;
 const earthFS = LOGF + `
 uniform sampler2D dayMap, nightMap, maskMap;
-uniform vec3 sunDir; uniform float feather, cutSea, glint, nightGain, alphaMul;
+uniform vec3 sunDir; uniform float feather, cutSea, glint, nightGain, alphaMul, seaFade;
 varying vec2 vUv; varying vec3 vPos;
 void main(){
 #include <logdepthbuf_fragment>
@@ -619,6 +619,7 @@ void main(){
     a = e.x * e.y;
   }
   if (cutSea > 0.0) a *= smoothstep(0.04, 0.35, land);
+  if (seaFade < 1.0) a *= mix(seaFade, 1.0, smoothstep(0.2, 0.7, land));   // far away, the sea comes from the world layer only
   float gl = dot(col, vec3(0.3, 0.59, 0.11));
   col = max(mix(vec3(gl), col, 1.18), 0.0);
   col = vec3(1.0) - exp(-col * 1.55);
@@ -629,7 +630,7 @@ function earthLayer(spec){
   const uni = {
     dayMap:{value:spec.day}, nightMap:{value:spec.night}, maskMap:{value:spec.mask},
     sunDir:{value:sunDir}, feather:{value:spec.feather || 0}, cutSea:{value:spec.cutSea ? 1 : 0},
-    glint:{value:spec.glint ? 1 : 0}, nightGain:{value:spec.nightGain || 2.2}, alphaMul:{value:1}
+    glint:{value:spec.glint ? 1 : 0}, nightGain:{value:spec.nightGain || 2.2}, alphaMul:{value:1}, seaFade:{value:1}
   };
   const geo = new THREE.SphereGeometry(r, Math.max(24, Math.ceil((lon1 - lon0) * 1.5)), Math.max(12, Math.ceil((lat1 - lat0) * 1.5)),
     (lon0 + 180) * D2R, (lon1 - lon0) * D2R, (90 - lat1) * D2R, (lat1 - lat0) * D2R);
@@ -940,6 +941,7 @@ function frame(now){
   rebuildTubes(alt);
   legProgress(shown);
   atmo.visible = alt > 0.02;
+  if (midLayer) midLayer.material.uniforms.seaFade.value = 1 - smooth(Math.min(1, Math.max(0, (alt - 0.08) / 0.10)));
   const span = k.d / 0.0277;
   const s = SLIDES[curIdx];
   for (const l of LEGS){ l.core.material.uniforms.time.value = reduce ? 0 : clock.t; }
@@ -1021,13 +1023,14 @@ addEventListener('resize', layout);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
 window.__deck = { jumpTo(i){ const k = Math.floor(i), fr = i - k; const y = fr ? centers[k] + (centers[k+1] - centers[k]) * fr : centers[k]; window.scrollTo(0, y); jump = 2; }, count:secs.length, ready:false };
 const loading = document.getElementById('loading');
+let midLayer = null;
 const black = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1); black.needsUpdate = true;
 requestAnimationFrame(frame);
 (async () => {
   const [wd, wn] = await Promise.all([loadImage(IMG.world_day), loadImage(IMG.world_night)]);
   earthLayer({lon0:-180, lon1:180, lat0:-90, lat1:90, r:1, order:0, day:texFrom(wd), night:texFrom(wn), mask:landMask(-180, 180, -90, 90, 4096, 2048, 0), glint:true});
   const [md, mn] = await Promise.all([loadImage(IMG.mid_day), loadImage(IMG.mid_night)]);
-  earthLayer({lon0:-12, lon1:19, lat0:34, lat1:47, r:1.00003, order:1, day:texFrom(md), night:texFrom(mn), mask:landMask(-12, 19, 34, 47, 2048, 859, 0), feather:0.04, glint:true});
+  midLayer = earthLayer({lon0:-12, lon1:19, lat0:34, lat1:47, r:1.00003, order:1, day:texFrom(md), night:texFrom(mn), mask:landMask(-12, 19, 34, 47, 2048, 859, 0), feather:0.04, glint:true});
   const [pd, pn, rd, rn] = await Promise.all([loadImage(IMG.pt_day), loadImage(IMG.pt_night), loadImage(IMG.ro_day), loadImage(IMG.ro_night)]);
   earthLayer({lon0:-10.2, lon1:-5.2, lat0:36.6, lat1:42.4, r:1.00006, order:2, day:texFrom(pd), night:texFrom(pn), mask:landMask(-10.2, -5.2, 36.6, 42.4, 1500, 1740, 30), feather:0.03, cutSea:true, nightGain:1.4});
   earthLayer({lon0:11, lon1:14, lat0:41, lat1:42.9, r:1.00006, order:2, day:texFrom(rd), night:texFrom(rn), mask:landMask(11, 14, 41, 42.9, 1050, 665, 28), feather:0.04, cutSea:true, nightGain:1.4});
