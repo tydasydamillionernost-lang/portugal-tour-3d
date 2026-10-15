@@ -473,19 +473,29 @@ const HOME = ['rom-ist-home','ist-mow-home','mow-uud-home'];
 
 /* camera key per section; sun = sun elevation at the centre (deg): + day, 0 sunset, − night with city lights */
 const SLIDES = [
-  {c:[2.6,40.2], d:0.70, tilt:18, sun:8, legs:[], place:'Пиренейский полуостров и Италия'},
-  {c:[-8.1,39.6], d:0.20, tilt:28, sun:18, legs:[], place:'Португалия'},
-  {c:[62,49], d:2.7, tilt:0, sun:-28, legs:OUT, focus:'lis', place:'Улан-Удэ → Лиссабон'},
-  {c:[-7.9,39.5], d:0.24, tilt:32, sun:30, legs:[], focus:'lis', place:'Португалия · сентябрь'},
-  {c:[1.6,39.4], d:0.60, tilt:24, sun:7, legs:TOUR, place:'Маршрут · 15 дней'},
-  {c:[-9.25,38.76], d:0.032, tilt:50, sun:16, legs:['ist-lis'].concat(TOUR.slice(0,1)), focus:'lis', pois:['roca','cas','bel'], place:'Лиссабон · 38,7° с. ш.'},
-  {c:[-8.08,41.16], d:0.048, tilt:50, sun:2, legs:TOUR.slice(0,3), focus:'opo', pois:['gaia','regua'], place:'Порту · 41,1° с. ш.'},
-  {c:[-8.42,37.08], d:0.037, tilt:50, sun:24, legs:TOUR.slice(0,5), focus:'lag', pois:['benagil','sagres'], place:'Алгарве · 37,1° с. ш.'},
-  {c:[-7.0,37.35], d:0.095, tilt:44, sun:5, legs:TOUR.slice(0,6), focus:'svq', place:'Севилья · 37,4° с. ш.'},
-  {c:[12.45,41.88], d:0.065, tilt:50, sun:-1.5, legs:TOUR, focus:'rom', pois:['fco'], place:'Рим · 41,9° с. ш.'},
-  {c:[46,47], d:2.9, tilt:0, sun:-14, legs:OUT.concat(TOUR, HOME), place:'Весь путь'}
+  {c:[2.6,40.2], d:0.70, tilt:18, day:0, utc:17.1, legs:[], place:'Пиренейский полуостров и Италия'},
+  {c:[-8.1,39.6], d:0.20, tilt:28, day:0, utc:16.9, legs:[], place:'Португалия'},
+  {c:[62,49], d:2.7, tilt:0, day:0, utc:15.5, legs:OUT, focus:'lis', place:'Улан-Удэ → Лиссабон'},
+  {c:[-7.9,39.5], d:0.24, tilt:32, day:0, utc:15.8, legs:[], focus:'lis', place:'Португалия · сентябрь'},
+  {c:[1.6,39.4], d:0.60, tilt:24, day:0, utc:17.3, legs:TOUR, place:'Маршрут · 15 дней'},
+  {c:[-9.25,38.76], d:0.032, tilt:50, day:1, utc:17.2, legs:['ist-lis'].concat(TOUR.slice(0,1)), focus:'lis', pois:['roca','cas','bel'], place:'Лиссабон · 38,7° с. ш.'},
+  {c:[-8.08,41.16], d:0.048, tilt:50, day:5, utc:18.4, legs:TOUR.slice(0,3), focus:'opo', pois:['gaia','regua'], place:'Порту · 41,1° с. ш.'},
+  {c:[-8.42,37.08], d:0.037, tilt:50, day:8, utc:16.5, legs:TOUR.slice(0,5), focus:'lag', pois:['benagil','sagres'], place:'Алгарве · 37,1° с. ш.'},
+  {c:[-7.0,37.35], d:0.095, tilt:44, day:11, utc:18.05, legs:TOUR.slice(0,6), focus:'svq', place:'Севилья · 37,4° с. ш.'},
+  {c:[12.45,41.88], d:0.065, tilt:50, day:13, utc:17.3, legs:TOUR, focus:'rom', pois:['fco'], place:'Рим · 41,9° с. ш.'},
+  {c:[46,47], d:2.9, tilt:0, day:15, utc:19.0, legs:OUT.concat(TOUR, HOME), place:'Весь путь'}
 ];
 SLIDES.forEach(s => { s.n = v3(s.c[0], s.c[1]).normalize(); });
+/* journey clock in hours: small shifts within a day, and a whole night passes when the trip moves on to the next days */
+SLIDES.forEach((s, i) => {
+  if (i === 0){ s.T = s.utc; return; }
+  const prev = SLIDES[i - 1];
+  let delta = ((s.utc - prev.utc) % 24 + 24) % 24;
+  if (delta > 12) delta -= 24;
+  if (s.day > prev.day) delta += 24;
+  s.T = prev.T + delta;
+});
+const DECL = 2.0;   // solar declination for mid-September
 
 /* ---------------- renderer, scene ---------------- */
 const canvas = document.getElementById('gl');
@@ -716,10 +726,18 @@ const LEGS = LEG_DEFS.map(def => {
   const ang = a3.angleTo(b3);
   let pts = [];
   if (def.t === 'air'){
-    const H = 0.018 + ang * 0.085, n = Math.max(80, Math.ceil(ang / D2R * 4));
+    const H = ang * 0.11, n = Math.max(80, Math.ceil(ang / D2R * 4));
+    // short hops bow out sideways over the sea, so they read as a curve even when seen end-on
+    const mid = slerp(a3, b3, 0.5);
+    const northT = UP.clone().sub(mid.clone().multiplyScalar(mid.dot(UP))).normalize();
+    const east = northT.clone().cross(mid).normalize();
+    const side = mid.clone().cross(b3.clone().sub(a3)).normalize();
+    if (side.dot(east) > 0) side.negate();                       // bow to the west, over the Atlantic
+    const bow = ang < 0.15 ? ang * 0.32 : 0;
     for (let i = 0; i <= n; i++){
-      const t = i / n, q = slerp(a3, b3, t);
-      pts.push(q.multiplyScalar(1.00012 + H * Math.sin(Math.PI * t)));
+      const t = i / n, sn = Math.sin(Math.PI * t);
+      const q = slerp(a3, b3, t).add(side.clone().multiplyScalar(bow * sn)).normalize();
+      pts.push(q.multiplyScalar(1.00012 + H * sn));
     }
   } else {
     const way = [A].concat(def.way || [], [B]).map(w => v3(w[0], w[1]).normalize());
@@ -739,6 +757,12 @@ const LEGS = LEG_DEFS.map(def => {
   return {id, t:def.t, home, curve, core, halo, ang, segs, radius:0, p:0};
 });
 const LEG = Object.fromEntries(LEGS.map(l => [l.id, l]));
+const headGeo = new THREE.ConeGeometry(1, 2.6, 18); headGeo.translate(0, -1.3, 0);
+for (const l of LEGS){
+  if (l.t !== 'air' || l.home) continue;
+  const m = new THREE.Mesh(headGeo, new THREE.MeshBasicMaterial({color:0xcfe4ff, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending}));
+  m.renderOrder = 11; scene.add(m); l.head = m;
+}
 const tip = new THREE.Sprite(new THREE.SpriteMaterial({map:texFocus, blending:THREE.AdditiveBlending, depthWrite:false, transparent:true}));
 tip.renderOrder = 13; scene.add(tip);
 
@@ -757,6 +781,15 @@ function setLegProgress(l, p){
   const vis = p > 0.001;
   l.core.visible = l.halo.visible = vis;
   l.core.material.uniforms.prog.value = p; l.halo.material.uniforms.prog.value = p;
+  if (l.head){
+    l.head.visible = p > 0.985;
+    if (l.head.visible){
+      const end = l.curve.getPoint(1), tan = l.curve.getTangent(0.995);
+      l.head.position.copy(end);
+      l.head.quaternion.setFromUnitVectors(UP, tan);
+      const s = l.radius * 3.2; l.head.scale.set(s, s, s);
+    }
+  }
 }
 
 /* ---------------- labels ---------------- */
@@ -812,8 +845,8 @@ function camAt(p){
   const d = Math.exp(Math.log(A.d) * (1 - f) + Math.log(B.d) * f + h * Math.sin(Math.PI * f));
   const bumpT = Math.min(1, h / 2) * Math.sin(Math.PI * f);
   const tilt = (A.tilt * (1 - f) + B.tilt * f) * (1 - bumpT) * D2R;
-  const sun = A.sun * (1 - f) + B.sun * f;
-  return {n, d, tilt, sun};
+  const T = A.T * (1 - f) + B.T * f;
+  return {n, d, tilt, T};
 }
 function placeCamera(k){
   const north = UP.clone().sub(k.n.clone().multiplyScalar(k.n.dot(UP))).normalize();
@@ -821,10 +854,9 @@ function placeCamera(k){
   camera.position.copy(pos); camera.up.copy(north); camera.lookAt(k.n);
   camera.near = Math.max(0.00002, k.d * 0.05); camera.far = 120;
   camera.updateProjectionMatrix();
-  // the sun sits low in the west of the place we are looking at
-  const west = north.clone().cross(k.n).negate().normalize();
-  const e = k.sun * D2R;
-  sunDir.copy(k.n).multiplyScalar(Math.sin(e)).add(west.multiplyScalar(Math.cos(e))).normalize();
+  // real sun: the subsolar point moves west 15° per hour of the journey clock
+  const hours = ((k.T % 24) + 24) % 24;
+  sunDir.copy(v3((12 - hours) * 15, DECL)).normalize();
 }
 function legProgress(p){
   const i = Math.min(SLIDES.length - 1, Math.floor(p)), f = p - i;
@@ -986,7 +1018,7 @@ function frame(now){
 layout();
 addEventListener('resize', layout);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
-window.__deck = { jumpTo(i){ window.scrollTo(0, centers[i]); jump = 2; }, count:secs.length, ready:false };
+window.__deck = { jumpTo(i){ const k = Math.floor(i), fr = i - k; const y = fr ? centers[k] + (centers[k+1] - centers[k]) * fr : centers[k]; window.scrollTo(0, y); jump = 2; }, count:secs.length, ready:false };
 const loading = document.getElementById('loading');
 const black = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1); black.needsUpdate = true;
 requestAnimationFrame(frame);
